@@ -1,0 +1,5 @@
+2026/5/26
+    1. 檢查結果: 算昨天的數據，拿今天的漲跌做檢驗
+    2. layout for output file
+    3. 今日長超過 8% 的股票的產業 
+    4. git log format
