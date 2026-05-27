@@ -1,6 +1,7 @@
 # pip install lxml
 from io import StringIO
 import traceback
+from turtle import pd
 
 
 def check_import(module_name, alias=None):
@@ -28,6 +29,8 @@ check_import("warnings")
 check_import("traceback")
 check_import("sys")
 check_import ("lxml") # pd.read_html 需要的解析器
+check_import ("wcwidth")
+check_import ("openpyxl")
 
 from io import StringIO # 不直接把整個 io 套件 import 進來，只 import 其中一個 function
 
@@ -141,17 +144,17 @@ def record_add(records_db, Name, Id, close_prices):
         'Name': Name,
         'Close': current_close,
         'MA5': ma5,
-        'F_Hist_Vol': hist_vol,
-        'F_BB_Width': bb_width,
-        'F_P_to_MA60': p_to_ma60,
-        'F_Trend_Strength': trend_str,
-        'F_P_to_MA20': p_to_ma20,
-        'F_P_to_BBUpper': p_to_bbupper,
-        'F_ROC_10': roc_10
+        'HistoryVol': hist_vol,
+        'BBWidth': bb_width,
+        'PriceToMA60': p_to_ma60,
+        'Strength': trend_str,
+        'PriceToMA20': p_to_ma20,
+        'PriceToBBUpper': p_to_bbupper,
+        'ROC_10': roc_10
     })
 
 def top_20_extract(df):
-    features = ['F_Hist_Vol', 'F_BB_Width', 'F_P_to_MA60', 'F_Trend_Strength', 'F_P_to_MA20', 'F_P_to_BBUpper', 'F_ROC_10']
+    features = ['HistoryVol', 'BBWidth', 'PriceToMA60', 'Strength', 'PriceToMA20', 'PriceToBBUpper', 'ROC_10']
     weights = [29.08, 19.33, 10.39, 7.67, 7.26, 5.09, 4.25]
 
     # 計算 PR 值 (0~1)，不直接排名 1、2、3...，是因為每天符合條件的股票數量不一樣，例如上下架
@@ -159,47 +162,107 @@ def top_20_extract(df):
         df[f + '_Rank'] = df[f].rank(pct=True)
 
     # 乘以權重
-    df['AI_Score'] = 0.0
+    df['Score'] = 0.0
     for f, w in zip (features, weights): 
-        df['AI_Score'] += df[f + '_Rank'] * w
+        df['Score'] += df[f + '_Rank'] * w
 
     # 正規化為 100 分制
     max_score = sum(weights)
-    df['AI_Score'] = (df['AI_Score'] / max_score) * 100
+    df['Score'] = (df['Score'] / max_score) * 100
 
     # 當下收盤價必須站上 5MA
     df_filtered = df[df['Close'] >= df['MA5']].copy()
-    top20 = df_filtered.sort_values(by='AI_Score', ascending=False).head(20)
+    top20 = df_filtered.sort_values(by='Score', ascending=False).head(20)
     
     return top20
 
-def top_20_dump(top20):
+def pad(text, width):
+    text = str(text)
+    return text + " " * max(width - wcwidth.wcswidth(text), 0)
+
+def top_20_dump(date, top20):
     
     print("\n" + "="*60)
-    print("TOP 20 名單")
+    print(f"{date} TOP 20 名單")
     print("="*60)
-    print(f"{'排名':<4} | {'代號':<6} | {'股名':<10} | {'收盤價':<8} | {'AI 分數':<6}")
+    print(f"{pad('排名', 10)} |"
+          f"{pad('代號', 10)} |"
+          f"{pad('股名', 10)} |"
+          f"{pad('收盤價', 10)} |"
+          f"{pad('AI 分數', 10)}")
     print("-" * 60)
-
-    for i, (_, row) in enumerate(top20.iterrows(), 1):
-        name = row['Name']
-        name_padded = name + chr(12288) * (5 - len(name)) if len(name) < 5 else name[:5]
-        print(f"{i:<4} | {row['ID']:<6} | {name_padded} | {row['Close']:<8.2f} | {row['AI_Score']:>6.2f}")
+    
+    for rank, (_, row) in enumerate(top20.iterrows(), 1):
+        score = f"{row['Score']:.2f}"
+        close = f"{row['Close']:.2f}"
+        print(f"{pad(rank, 10)} |"
+              f"{pad(row['ID'], 10)} |"
+              f"{pad(row['Name'], 10)} |"
+              f"{pad(close, 10)} |"
+              f"{pad(score, 10)}")
         
     print("="*60)
     print("前 7 檔優先分配資金，跌破 MA5 第二天未站回無條件停損\n")
+
 
 def top_20_save(top20):
     try:
         desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-        csv_filename = os.path.join(desktop_path, f"Top20_{timestamp}.csv")
-        columns_to_save = ['ID', 'Name', 'Close', 'AI_Score', 'F_Hist_Vol', 'F_BB_Width', 'F_P_to_MA60', 'F_Trend_Strength', 'F_P_to_MA20', 'F_P_to_BBUpper', 'F_ROC_10']
-        top20[columns_to_save].to_csv(csv_filename, index=False, encoding='utf-8-sig')
-        
-        print(f"完整特徵明細已儲存至桌面：Top20_{timestamp}.csv")
+        xlsx_filename = os.path.join(
+            desktop_path,
+            f"Top20_{timestamp}.xlsx"
+        )
+
+        columns_to_save = [
+            'ID',
+            'Name',
+            'Close',
+            'Score',
+            'HistoryVol',
+            'BBWidth',
+            'PriceToMA60',
+            'Strength',
+            'PriceToMA20',
+            'PriceToBBUpper',
+            'ROC_10'
+        ]
+
+        top20[columns_to_save].to_excel(xlsx_filename, index=False)
+
+        wb = openpyxl.load_workbook(xlsx_filename) # 用 openpyxl 打開 Excel 檔
+        ws = wb.active # 取得目前工作表
+
+        for col in ws.columns:
+            max_length = 0
+            column_letter = col[0].column_letter # 第一個 cell 屬於哪的 col，其實就是 col 本人 title
+
+            for cell in col:
+                try:
+                    cell_length = len(str(cell.value))
+                    if cell_length > max_length:
+                        max_length = cell_length # 找最長的那個當作這整欄的寬度
+                except:
+                    pass
+
+            adjusted_width = max_length + 4
+            ws.column_dimensions[column_letter].width = adjusted_width
+
+        wb.save(xlsx_filename)
+
+        print(f"Excel 已儲存至桌面：{xlsx_filename}")
+
     except:
         traceback.print_exc()
+
+def output_results(date, records):
+    df_res = pd.DataFrame(records)
+    if df_res.empty:
+        print("沒有足夠的資料可以運算。")
+        return
+    top20 = top_20_extract(df_res)
+    top_20_dump(date, top20)
+    top_20_save(top20)
 
 def main():
     stock_dict = get_tw_stock_list()
@@ -208,7 +271,18 @@ def main():
     
     all_tickers = list(stock_dict.keys()) # 把 stock_dict 裡所有的 key 取出來，轉成 list
     batch_size = 50
-    records = []
+    records_today = []
+    records_yesterday = []
+    records_2_days_ago = []
+    records_3_days_ago = []
+    records_4_days_ago = []
+
+    today = datetime.datetime.now().date()
+    yesterday = today - datetime.timedelta(days=1)
+    two_days_ago = today - datetime.timedelta(days=2)
+    three_days_ago = today - datetime.timedelta(days=3)
+    four_days_ago = today - datetime.timedelta(days=4)
+    
     
     # 批次下載歷史資料
     for i in range(0, len(all_tickers), batch_size): # e.g., range (0, 5, 2) 會回傳 0, 2, 4
@@ -227,21 +301,38 @@ def main():
                     
                     close = df['Close'] # 確認收盤價至少有 60 筆
                     if len(close) < 60: continue
-                    record_add(records, stock_dict[ticker]['name'], ticker.replace(".TW", "").replace(".TWO", ""), close)
+                    record_add(records_today, stock_dict[ticker]['name'], ticker.replace(".TW", "").replace(".TWO", ""), close)
+
+                    df = df.iloc[:-1]
+                    close = df['Close']
+                    if len(close) < 60: continue
+                    record_add(records_yesterday, stock_dict[ticker]['name'], ticker.replace(".TW", "").replace(".TWO", ""), df['Close'])
+
+                    df = df.iloc[:-1]
+                    close = df['Close']
+                    if len(close) < 60: continue
+                    record_add(records_2_days_ago, stock_dict[ticker]['name'], ticker.replace(".TW", "").replace(".TWO", ""), df['Close'])
+                    
+                    df = df.iloc[:-1]
+                    close = df['Close']
+                    if len(close) < 60: continue
+                    record_add(records_3_days_ago, stock_dict[ticker]['name'], ticker.replace(".TW", "").replace(".TWO", ""), df['Close'])
+                    
+                    df = df.iloc[:-1]  
+                    close = df['Close']
+                    if len(close) < 60: continue     
+                    record_add(records_4_days_ago, stock_dict[ticker]['name'], ticker.replace(".TW", "").replace(".TWO", ""), df['Close'])
                 except: continue
         except: pass
 
     print("\n資料下載完成！")
     print("[3/3] 正在執行 AI 權重運算與全市場 PR 值排名...")
     
-    df_res = pd.DataFrame(records)
-    if df_res.empty:
-        print("沒有足夠的資料可以運算。")
-        return
-    top20 = top_20_extract(df_res)
-
-    top_20_dump(top20)
-    top_20_save(top20)
+    output_results(today, records_today)
+    output_results(yesterday, records_yesterday)
+    output_results(two_days_ago, records_2_days_ago)
+    output_results(three_days_ago, records_3_days_ago)
+    output_results(four_days_ago, records_4_days_ago)   
 
     input("程式執行完畢，請按 Enter 鍵關閉視窗...")
 
