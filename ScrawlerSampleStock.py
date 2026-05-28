@@ -1,5 +1,8 @@
 # pip install lxml
+from csv import writer
+from datetime import datetime
 from io import StringIO
+import os
 import traceback
 from turtle import pd
 
@@ -114,7 +117,7 @@ def price_to_bollinger_upper (close_prices):
 
     return (current_close / bb_upper.iloc[-1] - 1) * 100
 
-def record_add(records_db, Name, Id, close_prices):
+def record_add(records_db, Name, Id, close_prices, following_day_price):
 
     ma5 = moving_average(close_prices, 5)
     ma20 = moving_average(close_prices, 20)
@@ -150,7 +153,8 @@ def record_add(records_db, Name, Id, close_prices):
         'Strength': trend_str,
         'PriceToMA20': p_to_ma20,
         'PriceToBBUpper': p_to_bbupper,
-        'ROC_10': roc_10
+        'ROC_10': roc_10,
+        'FollowingDayPrice': following_day_price
     })
 
 def top_20_extract(df):
@@ -182,37 +186,34 @@ def pad(text, width):
 
 def top_20_dump(date, top20):
     
-    print("\n" + "="*60)
+    print("\n" + "="*80)
     print(f"{date} TOP 20 名單")
-    print("="*60)
+    print("="*80)
     print(f"{pad('排名', 10)} |"
           f"{pad('代號', 10)} |"
           f"{pad('股名', 10)} |"
           f"{pad('收盤價', 10)} |"
-          f"{pad('AI 分數', 10)}")
-    print("-" * 60)
-    
+          f"{pad('AI 分數', 10)} |"
+          f"{pad('次日最高價', 10)}")
+    print("-" * 80)
+
     for rank, (_, row) in enumerate(top20.iterrows(), 1):
         score = f"{row['Score']:.2f}"
         close = f"{row['Close']:.2f}"
+        following_day_price = f"{row['FollowingDayPrice']:.2f}" if not pd.isna(row['FollowingDayPrice']) else "N/A"
         print(f"{pad(rank, 10)} |"
               f"{pad(row['ID'], 10)} |"
               f"{pad(row['Name'], 10)} |"
               f"{pad(close, 10)} |"
-              f"{pad(score, 10)}")
+              f"{pad(score, 10)} |"
+              f"{pad(following_day_price, 10)}")
         
-    print("="*60)
+    print("="*80)
     print("前 7 檔優先分配資金，跌破 MA5 第二天未站回無條件停損\n")
 
 
-def top_20_save(top20):
+def top_20_save(date, top20, writer):
     try:
-        desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-        xlsx_filename = os.path.join(
-            desktop_path,
-            f"Top20_{timestamp}.xlsx"
-        )
 
         columns_to_save = [
             'ID',
@@ -228,10 +229,9 @@ def top_20_save(top20):
             'ROC_10'
         ]
 
-        top20[columns_to_save].to_excel(xlsx_filename, index=False)
-
-        wb = openpyxl.load_workbook(xlsx_filename) # 用 openpyxl 打開 Excel 檔
-        ws = wb.active # 取得目前工作表
+        sheet_name = date.strftime("%Y-%m-%d")
+        top20[columns_to_save].to_excel(writer, sheet_name=sheet_name, index=False)
+        ws = writer.sheets[sheet_name]
 
         for col in ws.columns:
             max_length = 0
@@ -248,21 +248,17 @@ def top_20_save(top20):
             adjusted_width = max_length + 4
             ws.column_dimensions[column_letter].width = adjusted_width
 
-        wb.save(xlsx_filename)
-
-        print(f"Excel 已儲存至桌面：{xlsx_filename}")
-
     except:
         traceback.print_exc()
 
-def output_results(date, records):
+def output_results(writer, date, records):
     df_res = pd.DataFrame(records)
     if df_res.empty:
         print("沒有足夠的資料可以運算。")
         return
     top20 = top_20_extract(df_res)
     top_20_dump(date, top20)
-    top_20_save(top20)
+    top_20_save(date, top20, writer)
 
 def main():
     stock_dict = get_tw_stock_list()
@@ -277,11 +273,11 @@ def main():
     records_3_days_ago = []
     records_4_days_ago = []
 
-    today = datetime.datetime.now().date()
-    yesterday = today - datetime.timedelta(days=1)
-    two_days_ago = today - datetime.timedelta(days=2)
-    three_days_ago = today - datetime.timedelta(days=3)
-    four_days_ago = today - datetime.timedelta(days=4)
+    date_today = datetime.datetime.now().date()
+    date_yesterday = date_today - datetime.timedelta(days=1)
+    date_2_days_ago = date_today - datetime.timedelta(days=2)
+    date_3_days_ago = date_today - datetime.timedelta(days=3)
+    date_4_days_ago = date_today - datetime.timedelta(days=4)
     
     
     # 批次下載歷史資料
@@ -292,48 +288,40 @@ def main():
         try:
             # 抓取 100 天確保 60MA 計算正確
             data = yf.download(batch, period="100d", interval="1d", group_by='ticker', auto_adjust=False, progress=False, threads=True)
-            
+            date = ["today", "yesterday", "2_days_ago", "3_days_ago", "4_days_ago"]
+
             for ticker in batch: # ticker = {code}{suffix}
+                following_day_price = None
                 try:
                     df = data[ticker] if len(batch) > 1 else data
                     if df.empty or len(df) < 60: continue # 資料不到 60 天
                     df = df.dropna() # 把含有缺失值（NaN）的 row 刪掉
                     
-                    close = df['Close'] # 確認收盤價至少有 60 筆
-                    if len(close) < 60: continue
-                    record_add(records_today, stock_dict[ticker]['name'], ticker.replace(".TW", "").replace(".TWO", ""), close)
-
-                    df = df.iloc[:-1]
-                    close = df['Close']
-                    if len(close) < 60: continue
-                    record_add(records_yesterday, stock_dict[ticker]['name'], ticker.replace(".TW", "").replace(".TWO", ""), df['Close'])
-
-                    df = df.iloc[:-1]
-                    close = df['Close']
-                    if len(close) < 60: continue
-                    record_add(records_2_days_ago, stock_dict[ticker]['name'], ticker.replace(".TW", "").replace(".TWO", ""), df['Close'])
+                    for d in date:
+                        close = df['Close'] # 確認收盤價至少有 60 筆
+                        if len(close) < 60: continue
+                        records = locals().get(f"records_{d}") # 從目前 scope 的 local variables 裡，取出名字叫做 records_xxx 的變數
+                        record_add(records, stock_dict[ticker]['name'], ticker.replace(".TW", "").replace(".TWO", ""), close, following_day_price)
+                        following_day_price = df.iloc[-1]['High']
+                        df = df.iloc[:-1]
                     
-                    df = df.iloc[:-1]
-                    close = df['Close']
-                    if len(close) < 60: continue
-                    record_add(records_3_days_ago, stock_dict[ticker]['name'], ticker.replace(".TW", "").replace(".TWO", ""), df['Close'])
-                    
-                    df = df.iloc[:-1]  
-                    close = df['Close']
-                    if len(close) < 60: continue     
-                    record_add(records_4_days_ago, stock_dict[ticker]['name'], ticker.replace(".TW", "").replace(".TWO", ""), df['Close'])
                 except: continue
         except: pass
 
     print("\n資料下載完成！")
     print("[3/3] 正在執行 AI 權重運算與全市場 PR 值排名...")
     
-    output_results(today, records_today)
-    output_results(yesterday, records_yesterday)
-    output_results(two_days_ago, records_2_days_ago)
-    output_results(three_days_ago, records_3_days_ago)
-    output_results(four_days_ago, records_4_days_ago)   
-
+    desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+    xlsx_filename = os.path.join(desktop_path, f"Top20_{timestamp}.xlsx")
+    with pd.ExcelWriter(xlsx_filename, engine='openpyxl') as writer:
+        output_results(writer, date_today, records_today)
+        output_results(writer, date_yesterday, records_yesterday)
+        output_results(writer, date_2_days_ago, records_2_days_ago)
+        output_results(writer, date_3_days_ago, records_3_days_ago)
+        output_results(writer, date_4_days_ago, records_4_days_ago)   
+    
+    print(f"Excel 已儲存至桌面：{xlsx_filename}")
     input("程式執行完畢，請按 Enter 鍵關閉視窗...")
 
 if __name__ == "__main__": # python code 的 entry point
