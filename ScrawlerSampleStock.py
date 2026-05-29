@@ -69,10 +69,9 @@ def get_tw_stock_list():
             url = f"https://isin.twse.com.tw/isin/C_public.jsp?strMode={Page}"
             res = requests.get(url, headers=headers, verify=False, timeout=15)
             df = pd.read_html(StringIO(res.text), flavor="lxml")[0].iloc[2:] # df = dataframe     
-            for index, row in df.iterrows(): # 逐 row 讀取 DataFrame，每次回傳 (index, row)，但我們不需要 index，所以用 _ 代替
+            for index, row in df.iterrows(): # 逐 row 讀取 DataFrame，每次回傳 (index, row)
                 try:
                     code_name = str(row[0]).split()
-                    print(f"{code_name}...", end='\r')
                     if len(code_name) == 2:
                         code, name = code_name
                         cat = str(row[3]) # category
