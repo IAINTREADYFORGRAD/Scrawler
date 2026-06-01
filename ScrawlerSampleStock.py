@@ -302,7 +302,7 @@ def main():
                         records = locals().get(f"records_{d}") # 從目前 scope 的 local variables 裡，取出名字叫做 records_xxx 的變數
                         record_add(records, stock_dict[ticker]['name'], ticker.replace(".TW", "").replace(".TWO", ""), close, following_day_price)
                         following_day_price = df.iloc[-1]['High']
-                        df = df.iloc[:-1]
+                        df = df.iloc[:-1] # [:-1]: 取到最後一筆之前
                     
                 except: continue
         except: pass
