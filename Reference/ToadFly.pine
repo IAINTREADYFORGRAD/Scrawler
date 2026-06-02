@@ -74,8 +74,8 @@ profitPct = hasCost ? (close - costInput) / costInput * 100.0 : na
 trendBull = ema5 > ema10 and ema10 > ema20 and ema20 > ema60 # 強多頭排列
 trendMediumBull = close > ema20 and ema20 > ema60
 trendLongBull = close > ema60 and ema60 > ema200 # 長線多頭
-trendWeak = close < ema20 and close > ema60 and ema20 < ema60 # 偏弱
-trendBear = close < ema60 and ema20 < ema60 # 空頭
+trendWeak = close > ema60 and ema20 > close and ema60 > ema20 # 偏弱
+trendBear = ema60 > close and ema60 > ema20 # 空頭
 
 priceAboveEma20 = close > ema20
 priceNearEma20 = math.abs(ema20Dist) <= nearEma20Pct
@@ -87,13 +87,13 @@ ema60Rising = ema60 > ema60[1]
 //====================================================
 // 四、資金與量能
 //====================================================
-upVol = close > close[1] ? volume : 0.0
-downVol = close < close[1] ? volume : 0.0
+upVol = close > close[1] ? volume : 0.0 # 上漲日量比較多，偏買方
+downVol = close < close[1] ? volume : 0.0 # 下跌日量比較多，偏賣方
 
-moneyRaw = ta.ema(upVol - downVol, 13)
+moneyRaw = ta.ema(upVol - downVol, 13) # 做 13 日 EMA 平滑，EMAt​=αxt​+(1−α)EMAt−1​
 moneySignal = ta.ema(moneyRaw, 10)
 moneyBull = moneyRaw > moneySignal and moneyRaw > 0
-moneyRecover = moneyRaw > moneyRaw[1] and moneyRaw > moneySignal
+moneyRecover = moneyRaw > moneySignal and moneyRaw > moneyRaw[1] 
 moneyWeak = moneyRaw < moneySignal and moneyRaw < 0
 
 volStrong = volRatio >= volStrongRatio
@@ -107,7 +107,7 @@ deltaPower = ta.ema(deltaRaw, 5)
 deltaSignal = ta.ema(deltaPower, 10)
 
 deltaBull = deltaPower > deltaSignal and deltaPower > 0
-deltaRecover = deltaPower > deltaPower[1] and deltaPower > deltaSignal
+deltaRecover = deltaPower > deltaSignal and deltaPower > deltaPower[1] 
 deltaWeak = deltaPower < deltaSignal and deltaPower < 0
 
 //====================================================

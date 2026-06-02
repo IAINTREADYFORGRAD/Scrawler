@@ -1,3 +1,9 @@
+# 把爆量 + 紅 k 的前20名，截圖技術分析圖，存成 PDF
+# 爆量這裡定義為前 10 天的平均成交量，今天的成交量要大於平均成交量的 2 倍
+# 紅 k 定義為今天的收盤價 > 今天的開盤價
+
+import os
+
 import pandas as pd
 import yfinance as yf
 import requests
@@ -7,10 +13,28 @@ import traceback
 import wcwidth
 import datetime
 
+from io import BytesIO
+
+# requests 拿到的是 HTML 原始碼，selenium 拿到的是瀏覽器真正渲染後的畫面\
+# Selenium 真的開一個 Chrome，所以 JS 會執行、canvas 會畫出來，之後才能 screenshot
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+import time
+
 from io import StringIO
 
 warnings.filterwarnings('ignore')
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 
 
 def get_tw_stock_list():
@@ -175,6 +199,71 @@ def top_20_dump (top_20, date):
 
 
 
+def screen_shot_get(driver, ticker):
+
+    try:
+        url = f"https://tw.stock.yahoo.com/quote/{ticker}/technical-analysis/"
+        driver.get(url)
+
+        time.sleep(3)
+
+        # HTML element object 不是 png
+        chart = WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located(
+                (
+                    # 我要怎麼找 element，這裡用 CSS selector 找
+                    # HTML 找 element: <div id="qsp-technicalAnalysis-chart"></div>
+                    # CSS selector: div.id
+                    By.ID,
+                    "qsp-technicalAnalysis-chart"
+                )
+            )
+        )
+
+
+        # 轉成 bytes
+        image_bytes = BytesIO(chart.screenshot_as_png)
+
+        return image_bytes
+
+    except Exception as e:
+        print(f"Error getting screenshot for {ticker}: {e}")
+        return None
+
+def add_to_pdf(pdf, ticker, name, image_bytes):
+
+    pdf_width, pdf_height = A4
+
+    try:
+        
+        title = f"{ticker} {name}"
+        pdf.setFont("MSJH", 18)
+        pdf.drawString(40, pdf_height - 50, title)
+
+        # ImageReader 會把 bytes 轉成 image object
+        image = ImageReader(image_bytes)
+
+
+        img_width, img_height = image.getSize()
+
+        max_width = pdf_width - 80 # 幫圖片左右留邊界各 40
+        ratio = max_width / img_width
+        draw_width = max_width
+        draw_height = img_height * ratio
+
+        x = 40
+        y = pdf_height - 80 - draw_height
+
+        pdf.drawImage(image, x, y, width=draw_width, height=draw_height)
+
+        # 換下一頁
+        pdf.showPage()
+
+    except Exception as e:
+        print(f"Error adding {ticker} to PDF: {e}")
+        
+
+
 def main():
     
     stock_list = get_tw_stock_list()
@@ -219,7 +308,33 @@ def main():
     top_20_dump(top_20_yesterday, date_yesterday)                     
     top_20_dump(top_20_2_days_ago, date_2_days_ago)                     
     top_20_dump(top_20_3_days_ago, date_3_days_ago)                     
-    top_20_dump(top_20_4_days_ago, date_4_days_ago)                     
+    top_20_dump(top_20_4_days_ago, date_4_days_ago) 
+
+    # screen shot and save it as pdf
+    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+    driver = webdriver.Chrome()
+    driver.maximize_window() # 把 Selenium 開的 Chrome 視窗最大化
+    pdf_path = os.path.join(desktop, "ScrawlerHVBullCandle_top20.pdf")
+    pdf = canvas.Canvas(pdf_path, pagesize=A4)
+   
+    # 註冊字元
+    pdfmetrics.registerFont(
+    TTFont(
+        'MSJH', # Microsoft JhengHei，微軟正黑體
+        r'C:\Windows\Fonts\msjh.ttc'
+        )
+    )
+    
+    for ticker, data in top_20_today:
+        image = screen_shot_get(driver, ticker)
+        if image is None:
+            continue
+
+        add_to_pdf(pdf, ticker, data['name'], image)
+
+    pdf.save()
+    driver.quit()
+
 
 if __name__ == "__main__": # python code 的 entry point
     try:
@@ -229,7 +344,7 @@ if __name__ == "__main__": # python code 的 entry point
         print("程式執行中發生錯誤：")
         traceback.print_exc()
         print("!"*60)
-        input("Enter 鍵關閉視窗...")
+    input("Enter 鍵關閉視窗...")
 
 
 
